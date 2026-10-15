@@ -1,0 +1,29 @@
+# AgentFence Default Security Policy
+policy_version = "1.0.0"
+
+[workspace]
+# Default workspace path if relative
+relative_root = "workspace"
+
+[tools.list_files]
+enabled = true
+
+[tools.read_file]
+enabled = true
+max_size_bytes = 1048576  # 1MB limit
+
+[tools.write_file]
+enabled = true
+max_size_bytes = 1048576  # 1MB limit
+
+[tools.delete_file]
+enabled = false  # Explicitly disabled in default MVP policy
+
+[tools.run_command]
+enabled = false  # Disabled in Milestone 1 (enabled in Milestone 2 with Docker)
+
+[tools.network_request]
+enabled = false
+
+[tools.open_application]
+enabled = false
