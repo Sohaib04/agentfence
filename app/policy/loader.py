@@ -16,6 +16,10 @@ class ToolConfig(BaseModel):
     enabled: bool = False
     max_size_bytes: int = 1048576  # Default 1MB
     allowed_arguments: list[str] = Field(default_factory=list)
+    allowed_commands: list[str] = Field(default_factory=list)
+    max_timeout_seconds: int = 30
+    max_output_bytes: int = 1048576
+    sandbox_image: str = "agentfence-sandbox:0.1.0"
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -52,12 +56,24 @@ def load_policy(policy_path: Path | str | None = None) -> PolicyConfig:
     tools: dict[str, ToolConfig] = {}
     for tool_name, tool_data in raw_tools.items():
         if isinstance(tool_data, dict):
-            extra_keys = ("enabled", "max_size_bytes", "allowed_arguments")
+            standard_keys = {
+                "enabled",
+                "max_size_bytes",
+                "allowed_arguments",
+                "allowed_commands",
+                "max_timeout_seconds",
+                "max_output_bytes",
+                "sandbox_image",
+            }
             tools[tool_name] = ToolConfig(
                 enabled=tool_data.get("enabled", False),
                 max_size_bytes=tool_data.get("max_size_bytes", 1048576),
                 allowed_arguments=tool_data.get("allowed_arguments", []),
-                extra={k: v for k, v in tool_data.items() if k not in extra_keys},
+                allowed_commands=tool_data.get("allowed_commands", []),
+                max_timeout_seconds=tool_data.get("max_timeout_seconds", 30),
+                max_output_bytes=tool_data.get("max_output_bytes", 1048576),
+                sandbox_image=tool_data.get("sandbox_image", "agentfence-sandbox:0.1.0"),
+                extra={k: v for k, v in tool_data.items() if k not in standard_keys},
             )
 
     workspace_data = raw_data.get("workspace", {})

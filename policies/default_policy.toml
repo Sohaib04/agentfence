@@ -20,7 +20,11 @@ max_size_bytes = 1048576  # 1MB limit
 enabled = false  # Explicitly disabled in default MVP policy
 
 [tools.run_command]
-enabled = false  # Disabled in Milestone 1 (enabled in Milestone 2 with Docker)
+enabled = true
+allowed_commands = ["python3", "pytest", "ls", "cat", "echo", "grep", "head", "tail", "wc"]
+max_timeout_seconds = 30
+max_output_bytes = 1048576  # 1MB
+sandbox_image = "agentfence-sandbox:0.1.0"
 
 [tools.network_request]
 enabled = false

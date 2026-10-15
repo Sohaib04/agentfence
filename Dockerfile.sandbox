@@ -1,0 +1,20 @@
+# Pinned base image for AgentFence sandbox container
+FROM python:3.12.7-slim-bookworm
+
+# Prevent python from generating .pyc bytecode and force unbuffered output
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/workspace/.venv/bin:$PATH"
+
+# Create unprivileged sandbox user and dedicated workspace mount point
+RUN groupadd -g 10001 sandboxgroup && \
+    useradd -u 10001 -g sandboxgroup -s /bin/bash -m -d /home/sandboxuser sandboxuser && \
+    mkdir -p /workspace && \
+    chown -R sandboxuser:sandboxgroup /workspace
+
+WORKDIR /workspace
+
+# Switch to unprivileged user
+USER 10001:10001
+
+CMD ["/bin/bash"]

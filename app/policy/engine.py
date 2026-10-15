@@ -76,8 +76,9 @@ class PolicyEngine:
                 return self._evaluate_read_file(args, workspace_root, tool_cfg)
             elif tool_name == "write_file":
                 return self._evaluate_write_file(args, workspace_root, tool_cfg)
+            elif tool_name == "run_command":
+                return self._evaluate_run_command(args, workspace_root, tool_cfg)
             else:
-                # Any other tool not explicitly evaluated in Milestone 1 is denied
                 return self._deny(ReasonCode.TOOL_DISABLED)
 
         except Exception:
@@ -153,3 +154,54 @@ class PolicyEngine:
             return self._deny(reason)
 
         return self._allow(sanitized={"path": relative_path, "content": content_arg})
+
+    def _evaluate_run_command(
+        self, args: dict[str, Any], workspace_root: Path, tool_cfg: Any
+    ) -> PolicyDecision:
+        if "command" not in args:
+            return self._deny(ReasonCode.MISSING_ARGUMENT)
+
+        cmd_arg = args["command"]
+        if not isinstance(cmd_arg, str) or not cmd_arg.strip():
+            return self._deny(ReasonCode.INVALID_ARGUMENTS)
+
+        cmd = cmd_arg.strip()
+
+        # Reject path separators in command name (must be plain executable name in allowlist)
+        if "/" in cmd or "\\" in cmd:
+            return self._deny(ReasonCode.DISALLOWED_COMMAND)
+
+        # Enforce explicit allowlist
+        if cmd not in tool_cfg.allowed_commands:
+            return self._deny(ReasonCode.DISALLOWED_COMMAND)
+
+        # Arguments must be an explicit list of strings (never raw shell string)
+        raw_cmd_args = args.get("args", [])
+        if not isinstance(raw_cmd_args, list):
+            return self._deny(ReasonCode.INVALID_ARGUMENTS)
+
+        clean_args: list[str] = []
+        for a in raw_cmd_args:
+            if not isinstance(a, str):
+                return self._deny(ReasonCode.INVALID_ARGUMENTS)
+            if "\0" in a:
+                return self._deny(ReasonCode.INVALID_ARGUMENTS)
+            clean_args.append(a)
+
+        # Validate timeout if specified
+        timeout = tool_cfg.max_timeout_seconds
+        if "timeout" in args:
+            raw_timeout = args["timeout"]
+            if not isinstance(raw_timeout, (int, float)) or raw_timeout <= 0:
+                return self._deny(ReasonCode.INVALID_ARGUMENTS)
+            timeout = min(int(raw_timeout), tool_cfg.max_timeout_seconds)
+
+        return self._allow(
+            sanitized={
+                "command": cmd,
+                "args": clean_args,
+                "timeout": timeout,
+                "max_output_bytes": tool_cfg.max_output_bytes,
+                "sandbox_image": getattr(tool_cfg, "sandbox_image", "agentfence-sandbox:0.1.0"),
+            }
+        )
