@@ -77,3 +77,94 @@ def test_dispatcher_allowed_but_failed(dispatcher_env):
     assert "File not found" in res.error
     # Must not leak the full host workspace path
     assert str(ws) not in res.error
+
+
+def test_dispatcher_run_command_allowed_and_succeeded(dispatcher_env):
+    dispatcher = dispatcher_env["dispatcher"]
+
+    # Mock successful execution
+    with patch.object(dispatcher.executor, "run") as mock_run:
+        from app.executor.models import ExecutionResult
+
+        mock_run.return_value = ExecutionResult(
+            exit_code=0,
+            stdout="pytest passed\n",
+            stderr="",
+            timed_out=False,
+            truncated=False,
+            duration_seconds=0.12,
+        )
+
+        action = ActionRequest(tool="run_command", arguments={"command": "pytest", "args": ["-v"]})
+        res = dispatcher.dispatch(action)
+
+        assert res.decision == DecisionType.ALLOW
+        assert res.status == ActionStatus.SUCCESS
+        assert res.result["exit_code"] == 0
+        assert res.result["stdout"] == "pytest passed\n"
+        assert res.error is None
+        mock_run.assert_called_once()
+
+
+def test_dispatcher_run_command_allowed_but_failed_exit_code(dispatcher_env):
+    dispatcher = dispatcher_env["dispatcher"]
+
+    with patch.object(dispatcher.executor, "run") as mock_run:
+        from app.executor.models import ExecutionResult
+
+        mock_run.return_value = ExecutionResult(
+            exit_code=1,
+            stdout="test failure\n",
+            stderr="AssertionError",
+            timed_out=False,
+            truncated=False,
+            duration_seconds=0.2,
+        )
+
+        action = ActionRequest(tool="run_command", arguments={"command": "pytest"})
+        res = dispatcher.dispatch(action)
+
+        assert res.decision == DecisionType.ALLOW
+        assert res.status == ActionStatus.ERROR
+        assert res.result["exit_code"] == 1
+        assert "Command failed with exit code 1" in res.error
+
+
+def test_dispatcher_run_command_timed_out(dispatcher_env):
+    dispatcher = dispatcher_env["dispatcher"]
+
+    with patch.object(dispatcher.executor, "run") as mock_run:
+        from app.executor.models import ExecutionResult
+
+        mock_run.return_value = ExecutionResult(
+            exit_code=124,
+            stdout="partial output",
+            stderr="",
+            timed_out=True,
+            truncated=False,
+            duration_seconds=10.0,
+        )
+
+        action = ActionRequest(tool="run_command", arguments={"command": "python3", "timeout": 10})
+        res = dispatcher.dispatch(action)
+
+        assert res.decision == DecisionType.ALLOW
+        assert res.status == ActionStatus.TIMED_OUT
+        assert res.result["timed_out"] is True
+        assert res.error == "Command execution timed out"
+
+
+def test_dispatcher_run_command_denied_never_reaches_executor(dispatcher_env):
+    dispatcher = dispatcher_env["dispatcher"]
+
+    with patch.object(dispatcher.executor, "run") as mock_run:
+        action = ActionRequest(
+            tool="run_command", arguments={"command": "rm", "args": ["-rf", "/"]}
+        )
+        res = dispatcher.dispatch(action)
+
+        assert res.decision == DecisionType.DENY
+        assert res.status == ActionStatus.DENIED
+        assert res.reason == ReasonCode.DISALLOWED_COMMAND
+        # Executor must never be called!
+        mock_run.assert_not_called()

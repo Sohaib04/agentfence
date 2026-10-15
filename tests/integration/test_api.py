@@ -181,3 +181,74 @@ def test_oversized_request_payload_rejected(client: TestClient):
         headers=headers,
     )
     assert res.status_code == 413
+
+
+def test_run_command_api_lifecycle(client: TestClient):
+    from unittest.mock import patch
+
+    from app.executor.models import ExecutionResult
+
+    headers = {"Authorization": f"Bearer {DEFAULT_DEV_TOKEN}"}
+
+    # 1. Successful execution
+    with patch.object(client.app.state.dispatcher.executor, "run") as mock_run:
+        mock_run.return_value = ExecutionResult(
+            exit_code=0,
+            stdout="hello from test\n",
+            stderr="",
+            timed_out=False,
+            truncated=False,
+            duration_seconds=0.05,
+        )
+
+        res = client.post(
+            "/v1/actions",
+            json={"tool": "run_command", "arguments": {"command": "echo", "args": ["hello"]}},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["decision"] == "allow"
+        assert data["status"] == "success"
+        assert data["result"]["stdout"] == "hello from test\n"
+        assert data["result"]["exit_code"] == 0
+
+    # 2. Disallowed command denied by policy
+    with patch.object(client.app.state.dispatcher.executor, "run") as mock_run:
+        res = client.post(
+            "/v1/actions",
+            json={
+                "tool": "run_command",
+                "arguments": {"command": "curl", "args": ["http://evil.com"]},
+            },
+            headers=headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["decision"] == "deny"
+        assert data["status"] == "denied"
+        assert data["reason"] == "disallowed_command"
+        mock_run.assert_not_called()
+
+    # 3. Timed out command
+    with patch.object(client.app.state.dispatcher.executor, "run") as mock_run:
+        mock_run.return_value = ExecutionResult(
+            exit_code=124,
+            stdout="timeout occurred",
+            stderr="",
+            timed_out=True,
+            truncated=False,
+            duration_seconds=5.0,
+        )
+
+        res = client.post(
+            "/v1/actions",
+            json={"tool": "run_command", "arguments": {"command": "python3", "timeout": 5}},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["decision"] == "allow"
+        assert data["status"] == "timed_out"
+        assert data["error"] == "Command execution timed out"
+        assert data["result"]["timed_out"] is True
