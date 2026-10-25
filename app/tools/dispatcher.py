@@ -1,3 +1,4 @@
+import concurrent.futures
 import time
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from app.audit.store import AuditStore
 from app.executor.docker import CommandExecutor, DockerExecutor
 from app.executor.models import CommandExecutionError, ContainerLimits
 from app.policy.engine import PolicyEngine
-from app.policy.models import ActionRequest, DecisionType, ReasonCode
+from app.policy.models import ActionRequest, DecisionType, PolicyDecision, ReasonCode
 from app.tools.files import ToolExecutionError, list_files, read_file, write_file
 
 
@@ -24,14 +25,27 @@ class ToolDispatcher:
         policy_engine: PolicyEngine | None = None,
         executor: CommandExecutor | None = None,
         audit_store: AuditStore | None = None,
+        max_workers: int = 4,
     ) -> None:
         self.workspace_root = workspace_root.resolve()
         self.policy_engine = policy_engine or PolicyEngine()
         self.executor = executor or DockerExecutor()
         self.audit_store = audit_store
+        self.max_workers = max_workers
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="agentfence-worker",
+        )
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Shut down the background thread pool."""
+        self._thread_pool.shutdown(wait=wait, cancel_futures=True)
 
     def dispatch(
-        self, action: ActionRequest | dict[str, Any], task_id: str | None = None
+        self,
+        action: ActionRequest | dict[str, Any],
+        task_id: str | None = None,
+        is_async: bool = False,
     ) -> ActionResponse:
         """Route an action through policy validation and, if approved, to execution."""
         task_id = task_id or str(uuid.uuid4())
@@ -43,8 +57,10 @@ class ToolDispatcher:
             raw_args = (
                 action.get("arguments", {}) if isinstance(action.get("arguments"), dict) else {}
             )
+            is_async = is_async or bool(action.get("async", False))
             try:
                 action_req = ActionRequest.model_validate(action)
+                is_async = is_async or action_req.async_exec
             except Exception:
                 res = ActionResponse(
                     task_id=task_id,
@@ -61,6 +77,7 @@ class ToolDispatcher:
         elif isinstance(action, ActionRequest):
             action_req = action
             raw_args = action_req.arguments
+            is_async = is_async or action_req.async_exec
         else:
             res = ActionResponse(
                 task_id=task_id,
@@ -78,7 +95,7 @@ class ToolDispatcher:
         # 1. Deterministic Policy Evaluation (Choke Point)
         decision = self.policy_engine.evaluate(action_req, self.workspace_root)
 
-        # 2. Denied by policy
+        # 2. Denied by policy: never execute, record denial immediately
         if decision.decision != DecisionType.ALLOW:
             res = ActionResponse(
                 task_id=task_id,
@@ -93,7 +110,33 @@ class ToolDispatcher:
             self._record_outcome(res, raw_args, time.monotonic() - start_time)
             return res
 
-        # 3. Allowed: execute tool with sanitized arguments
+        # 3. Allowed: execute synchronously or asynchronously
+        if not is_async:
+            return self._dispatch_sync(
+                task_id=task_id,
+                action_req=action_req,
+                decision=decision,
+                raw_args=raw_args,
+                start_time=start_time,
+            )
+        else:
+            return self._dispatch_async(
+                task_id=task_id,
+                action_req=action_req,
+                decision=decision,
+                raw_args=raw_args,
+                start_time=start_time,
+            )
+
+    def _dispatch_sync(
+        self,
+        task_id: str,
+        action_req: ActionRequest,
+        decision: PolicyDecision,
+        raw_args: dict[str, Any],
+        start_time: float,
+    ) -> ActionResponse:
+        """Execute tool synchronously and record outcome."""
         try:
             result, status = self._execute_tool(action_req.tool, decision.sanitized_arguments)
             error_msg = None
@@ -159,6 +202,162 @@ class ToolDispatcher:
             )
             self._record_outcome(res, raw_args, time.monotonic() - start_time)
             return res
+
+    def _dispatch_async(
+        self,
+        task_id: str,
+        action_req: ActionRequest,
+        decision: PolicyDecision,
+        raw_args: dict[str, Any],
+        start_time: float,
+    ) -> ActionResponse:
+        """Persist initial pending state and spawn execution in background worker thread."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        redacted_args = redact_sensitive_payload(raw_args, tool_name=action_req.tool)
+
+        task_record = TaskRecord(
+            task_id=task_id,
+            created_at=now_iso,
+            updated_at=now_iso,
+            tool=action_req.tool,
+            arguments=redacted_args if isinstance(redacted_args, dict) else {},
+            decision=decision.decision.value,
+            reason=decision.reason.value,
+            policy_version=decision.policy_version,
+            status=ActionStatus.PENDING.value,
+            exit_code=None,
+            result=None,
+            error=None,
+            duration_seconds=None,
+        )
+
+        if self.audit_store:
+            try:
+                self.audit_store.save_task(task_record)
+                audit_event = AuditEvent(
+                    timestamp=now_iso,
+                    task_id=task_id,
+                    event_type="action_started",
+                    tool=action_req.tool,
+                    decision=decision.decision.value,
+                    reason=decision.reason.value,
+                    details={
+                        "status": ActionStatus.PENDING.value,
+                        "async": True,
+                    },
+                )
+                self.audit_store.record_event(audit_event)
+            except Exception:
+                pass
+
+        # Spawn execution in worker thread
+        self._thread_pool.submit(
+            self._run_async_task,
+            task_id=task_id,
+            action_req=action_req,
+            decision=decision,
+            start_time=start_time,
+        )
+
+        return ActionResponse(
+            task_id=task_id,
+            tool=action_req.tool,
+            decision=DecisionType.ALLOW,
+            reason=decision.reason,
+            policy_version=decision.policy_version,
+            status=ActionStatus.PENDING,
+            result=None,
+            error=None,
+        )
+
+    def _run_async_task(
+        self,
+        task_id: str,
+        action_req: ActionRequest,
+        decision: PolicyDecision,
+        start_time: float,
+    ) -> None:
+        """Execute approved tool in background worker and update durable task & audit records."""
+        # 1. Transition: PENDING -> RUNNING
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if self.audit_store:
+            try:
+                task = self.audit_store.get_task(task_id)
+                if task:
+                    task.status = ActionStatus.RUNNING.value
+                    task.updated_at = now_iso
+                    self.audit_store.save_task(task)
+            except Exception:
+                pass
+
+        status = ActionStatus.ERROR
+        result = None
+        error_msg = None
+
+        # 2. Execute approved tool
+        try:
+            result, status = self._execute_tool(action_req.tool, decision.sanitized_arguments)
+            if status == ActionStatus.TIMED_OUT:
+                error_msg = "Command execution timed out"
+            elif (
+                status == ActionStatus.ERROR
+                and isinstance(result, dict)
+                and result.get("exit_code", 0) != 0
+            ):
+                error_msg = f"Command failed with exit code {result['exit_code']}"
+        except ToolExecutionError as e:
+            status = ActionStatus.ERROR
+            error_msg = self._sanitize_error(str(e))
+        except CommandExecutionError as e:
+            status = ActionStatus.ERROR
+            error_msg = self._sanitize_error(str(e))
+        except Exception:
+            status = ActionStatus.ERROR
+            error_msg = "Internal tool execution error"
+        finally:
+            # 3. Transition: RUNNING -> SUCCESS / ERROR / TIMED_OUT
+            duration_seconds = time.monotonic() - start_time
+            completed_iso = datetime.now(timezone.utc).isoformat()
+
+            exit_code = None
+            if isinstance(result, dict) and "exit_code" in result:
+                exit_code = result["exit_code"]
+
+            redacted_result = (
+                redact_sensitive_payload(result, tool_name=action_req.tool, is_result=True)
+                if result
+                else None
+            )
+
+            if self.audit_store:
+                try:
+                    task = self.audit_store.get_task(task_id)
+                    if task:
+                        task.updated_at = completed_iso
+                        task.status = status.value
+                        task.exit_code = exit_code
+                        task.result = redacted_result if isinstance(redacted_result, dict) else None
+                        task.error = error_msg
+                        task.duration_seconds = round(duration_seconds, 3)
+                        self.audit_store.save_task(task)
+
+                    event_type = "action_executed"
+                    audit_event = AuditEvent(
+                        timestamp=completed_iso,
+                        task_id=task_id,
+                        event_type=event_type,
+                        tool=action_req.tool,
+                        decision=decision.decision.value,
+                        reason=decision.reason.value,
+                        details={
+                            "status": status.value,
+                            "duration_seconds": round(duration_seconds, 3),
+                            "async": True,
+                        },
+                    )
+                    self.audit_store.record_event(audit_event)
+                except Exception:
+                    pass
 
     def _record_outcome(
         self,

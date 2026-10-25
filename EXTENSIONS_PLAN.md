@@ -56,7 +56,7 @@
 
 ---
 
-## Side Quest 3: Asynchronous / Background Execution & Polling
+## Side Quest 3: Asynchronous / Background Execution & Polling [COMPLETED]
 
 **Goal:** Allow long-running commands (e.g., test suites, compiles) to run asynchronously without blocking client HTTP requests.
 

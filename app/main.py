@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -15,6 +16,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 
 # Maximum request body size allowed: 2 MB
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle and cleanly shut down background workers."""
+    yield
+    dispatcher = getattr(app.state, "dispatcher", None)
+    if dispatcher and hasattr(dispatcher, "shutdown"):
+        dispatcher.shutdown(wait=False)
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
@@ -51,6 +61,7 @@ def create_app(
         version="0.1.0",
         docs_url=None,  # Disabled by default for local security
         redoc_url=None,
+        lifespan=lifespan,
     )
 
     app.add_middleware(RequestSizeLimitMiddleware)

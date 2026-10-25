@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DecisionType(str, Enum):
@@ -25,8 +25,11 @@ class ReasonCode(str, Enum):
 
 
 class ActionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    async_exec: bool = Field(default=False, alias="async")
 
 
 class PolicyDecision(BaseModel):

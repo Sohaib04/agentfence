@@ -3,12 +3,12 @@
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.__init__ import __version__
 from app.api.auth import verify_auth_token
-from app.api.schemas import ActionResponse, HealthResponse
-from app.policy.models import ActionRequest
+from app.api.schemas import ActionResponse, ActionStatus, HealthResponse
+from app.policy.models import ActionRequest, DecisionType
 from app.tools.dispatcher import ToolDispatcher
 
 router = APIRouter()
@@ -32,14 +32,34 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok", version=__version__)
 
 
-@router.post("/v1/actions", response_model=ActionResponse)
+@router.post(
+    "/v1/actions",
+    response_model=ActionResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_200_OK: {
+            "model": ActionResponse,
+            "description": "Action executed synchronously or denied by policy",
+        },
+        status.HTTP_202_ACCEPTED: {
+            "model": ActionResponse,
+            "description": "Action accepted for asynchronous background execution",
+        },
+    },
+)
 def handle_action(
     action: ActionRequest,
+    response: Response,
+    async_query: bool | None = Query(default=None, alias="async"),
     _token: str = Depends(verify_auth_token),
     dispatcher: ToolDispatcher = Depends(get_dispatcher),
 ) -> ActionResponse:
     """Validate, authorize, and execute a requested tool action."""
-    return dispatcher.dispatch(action)
+    is_async = async_query if async_query is not None else action.async_exec
+    result = dispatcher.dispatch(action, is_async=is_async)
+    if is_async and result.decision == DecisionType.ALLOW and result.status == ActionStatus.PENDING:
+        response.status_code = status.HTTP_202_ACCEPTED
+    return result
 
 
 @router.get("/v1/tasks/{task_id}", response_model=dict[str, Any])

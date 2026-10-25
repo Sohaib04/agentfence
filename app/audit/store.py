@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator
@@ -13,6 +14,7 @@ class AuditStore:
     def __init__(self, db_path: Path | str = ":memory:") -> None:
         self.db_path = str(db_path)
         self._shared_conn: sqlite3.Connection | None = None
+        self._lock = threading.Lock()
 
         if self.db_path == ":memory:":
             self._shared_conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -27,19 +29,20 @@ class AuditStore:
     @contextmanager
     def _connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Yield a database connection within an active transaction and manage closing."""
-        if self._shared_conn is not None:
-            with self._shared_conn:
-                yield self._shared_conn
-        else:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON;")
-            conn.execute("PRAGMA journal_mode = WAL;")
-            try:
-                with conn:
-                    yield conn
-            finally:
-                conn.close()
+        with self._lock:
+            if self._shared_conn is not None:
+                with self._shared_conn:
+                    yield self._shared_conn
+            else:
+                conn = sqlite3.connect(self.db_path, timeout=30.0)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON;")
+                conn.execute("PRAGMA journal_mode = WAL;")
+                try:
+                    with conn:
+                        yield conn
+                finally:
+                    conn.close()
 
     def _init_db(self) -> None:
         """Initialize the database schema."""

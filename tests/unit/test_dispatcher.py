@@ -1,11 +1,13 @@
 """Unit tests for ToolDispatcher single choke point."""
 
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from app.api.schemas import ActionStatus
+from app.audit.store import AuditStore
 from app.policy.engine import PolicyEngine
 from app.policy.models import ActionRequest, DecisionType, ReasonCode
 from app.tools.dispatcher import ToolDispatcher
@@ -168,3 +170,58 @@ def test_dispatcher_run_command_denied_never_reaches_executor(dispatcher_env):
         assert res.reason == ReasonCode.DISALLOWED_COMMAND
         # Executor must never be called!
         mock_run.assert_not_called()
+
+
+def test_dispatcher_async_dispatch_and_execution(tmp_path: Path):
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    store = AuditStore(db_path=":memory:")
+    dispatcher = ToolDispatcher(workspace_root=ws, audit_store=store)
+
+    action = ActionRequest(
+        tool="write_file",
+        arguments={"path": "async_unit.txt", "content": "unit async content"},
+        async_exec=True,
+    )
+    res = dispatcher.dispatch(action)
+
+    assert res.decision == DecisionType.ALLOW
+    assert res.status == ActionStatus.PENDING
+    task_id = res.task_id
+
+    # Wait for background worker execution
+    final_task = None
+    for _ in range(40):
+        task = store.get_task(task_id)
+        if task and task.status == "success":
+            final_task = task
+            break
+        time.sleep(0.05)
+
+    assert final_task is not None
+    assert final_task.status == "success"
+    assert (ws / "async_unit.txt").read_text() == "unit async content"
+
+
+def test_dispatcher_async_denial_blocks_immediately(tmp_path: Path):
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    store = AuditStore(db_path=":memory:")
+    dispatcher = ToolDispatcher(workspace_root=ws, audit_store=store)
+
+    action = ActionRequest(
+        tool="read_file",
+        arguments={"path": "../../etc/passwd"},
+        async_exec=True,
+    )
+    res = dispatcher.dispatch(action)
+
+    assert res.decision == DecisionType.DENY
+    assert res.status == ActionStatus.DENIED
+    assert res.reason == ReasonCode.PATH_OUTSIDE_WORKSPACE
+
+    # Ensure recorded in store as denied
+    task = store.get_task(res.task_id)
+    assert task is not None
+    assert task.status == "denied"
+    assert task.decision == "deny"

@@ -139,7 +139,7 @@ ruff format --check .
 ruff check .
 ```
 
-*Test Results:* **62 tests** total (unit, integration, Docker container isolation, and adversarial prompt-injection scenarios). When Docker is offline, Docker-dependent tests are skipped cleanly and reported explicitly.
+*Test Results:* **70 tests** total (unit, integration, Docker container isolation, async background execution, and adversarial prompt-injection scenarios). When Docker is offline, Docker-dependent tests are skipped cleanly and reported explicitly.
 
 ---
 
@@ -218,13 +218,35 @@ curl -X POST http://127.0.0.1:8000/v1/actions \
 }
 ```
 
-#### 4. Retrieve Persisted Task State
+#### 4. Asynchronous Background Execution (Side Quest 3)
+Execute commands asynchronously without blocking the client. Returns `202 Accepted` immediately:
+```bash
+curl -X POST http://127.0.0.1:8000/v1/actions \
+  -H "Authorization: Bearer agentfence-dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "run_command", "arguments": {"command": "echo", "args": ["hello async"]}, "async": true}'
+```
+*Response (HTTP 202 Accepted):*
+```json
+{
+  "task_id": "8fb87019-33ad-43ec-8b29-e0d297a7e366",
+  "tool": "run_command",
+  "decision": "allow",
+  "reason": "allowed",
+  "policy_version": "1.0.0",
+  "status": "pending",
+  "result": null,
+  "error": null
+}
+```
+
+#### 5. Poll / Retrieve Persisted Task State
 ```bash
 curl -X GET http://127.0.0.1:8000/v1/tasks/8fb87019-33ad-43ec-8b29-e0d297a7e366 \
   -H "Authorization: Bearer agentfence-dev-token"
 ```
 
-#### 5. Inspect Audit Log
+#### 6. Inspect Audit Log
 ```bash
 curl -X GET "http://127.0.0.1:8000/v1/audit?limit=10" \
   -H "Authorization: Bearer agentfence-dev-token"

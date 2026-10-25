@@ -9,6 +9,8 @@ from app.policy.models import DecisionType, ReasonCode
 
 
 class ActionStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
     DENIED = "denied"
     SUCCESS = "success"
     ERROR = "error"
