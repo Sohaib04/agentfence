@@ -29,3 +29,13 @@ class ActionResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+
+
+class AuditListResponse(BaseModel):
+    events: list[dict[str, Any]]
+    count: int
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+    error_code: str | None = None
