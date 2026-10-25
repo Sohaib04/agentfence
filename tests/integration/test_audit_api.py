@@ -5,6 +5,8 @@ and server restart survival.
 from pathlib import Path
 
 import pytest
+
+# pyrefly: ignore[missing-import]
 from fastapi.testclient import TestClient
 
 from app.api.auth import DEFAULT_DEV_TOKEN
