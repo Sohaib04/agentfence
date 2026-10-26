@@ -13,7 +13,15 @@ from app.executor.docker import CommandExecutor, DockerExecutor
 from app.executor.models import CommandExecutionError, ContainerLimits
 from app.policy.engine import PolicyEngine
 from app.policy.models import ActionRequest, DecisionType, PolicyDecision, ReasonCode
-from app.tools.files import ToolExecutionError, list_files, read_file, write_file
+from app.tools.files import ToolExecutionError, delete_file, list_files, read_file, write_file
+
+
+class TaskNotFoundError(Exception):
+    """Raised when an operation is requested on a non-existent task ID."""
+
+
+class InvalidTaskStateError(Exception):
+    """Raised when an operation is invalid for the task's current lifecycle state."""
 
 
 class ToolDispatcher:
@@ -95,7 +103,16 @@ class ToolDispatcher:
         # 1. Deterministic Policy Evaluation (Choke Point)
         decision = self.policy_engine.evaluate(action_req, self.workspace_root)
 
-        # 2. Denied by policy: never execute, record denial immediately
+        # 2. Paused for human approval: never execute yet, record pending_approval
+        if decision.decision == DecisionType.PENDING_APPROVAL:
+            return self._dispatch_pending_approval(
+                task_id=task_id,
+                action_req=action_req,
+                decision=decision,
+                raw_args=raw_args,
+            )
+
+        # 3. Denied by policy: never execute, record denial immediately
         if decision.decision != DecisionType.ALLOW:
             res = ActionResponse(
                 task_id=task_id,
@@ -110,7 +127,7 @@ class ToolDispatcher:
             self._record_outcome(res, raw_args, time.monotonic() - start_time)
             return res
 
-        # 3. Allowed: execute synchronously or asynchronously
+        # 4. Allowed: execute synchronously or asynchronously
         if not is_async:
             return self._dispatch_sync(
                 task_id=task_id,
@@ -268,6 +285,241 @@ class ToolDispatcher:
             status=ActionStatus.PENDING,
             result=None,
             error=None,
+        )
+
+    def _dispatch_pending_approval(
+        self,
+        task_id: str,
+        action_req: ActionRequest,
+        decision: PolicyDecision,
+        raw_args: dict[str, Any],
+    ) -> ActionResponse:
+        """Pause action execution in pending_approval state until human confirmation."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        redacted_args = redact_sensitive_payload(raw_args, tool_name=action_req.tool)
+
+        task_record = TaskRecord(
+            task_id=task_id,
+            created_at=now_iso,
+            updated_at=now_iso,
+            tool=action_req.tool,
+            arguments=redacted_args if isinstance(redacted_args, dict) else {},
+            decision=decision.decision.value,
+            reason=decision.reason.value,
+            policy_version=decision.policy_version,
+            status=ActionStatus.PENDING_APPROVAL.value,
+            exit_code=None,
+            result=None,
+            error=None,
+            duration_seconds=None,
+        )
+
+        if self.audit_store:
+            try:
+                self.audit_store.save_task(task_record)
+                audit_event = AuditEvent(
+                    timestamp=now_iso,
+                    task_id=task_id,
+                    event_type="approval_requested",
+                    tool=action_req.tool,
+                    decision=decision.decision.value,
+                    reason=decision.reason.value,
+                    details={
+                        "status": ActionStatus.PENDING_APPROVAL.value,
+                        "requires_approval": True,
+                    },
+                )
+                self.audit_store.record_event(audit_event)
+            except Exception:
+                pass
+
+        return ActionResponse(
+            task_id=task_id,
+            tool=action_req.tool,
+            decision=decision.decision,
+            reason=decision.reason,
+            policy_version=decision.policy_version,
+            status=ActionStatus.PENDING_APPROVAL,
+            result=None,
+            error=None,
+        )
+
+    def approve_task(self, task_id: str) -> ActionResponse:
+        """Approve and execute a task waiting in pending_approval state."""
+        if not self.audit_store:
+            raise ToolExecutionError("Audit store not configured")
+
+        task = self.audit_store.get_task(task_id)
+        if not task:
+            raise TaskNotFoundError(f"Task not found: {task_id}")
+
+        if task.status != ActionStatus.PENDING_APPROVAL.value:
+            raise InvalidTaskStateError(
+                f"Task {task_id} is not pending approval (status: {task.status})"
+            )
+
+        # Re-evaluate policy with approval bypass to ensure workspace safety remains valid
+        action_req = ActionRequest(tool=task.tool, arguments=task.arguments)
+        decision = self.policy_engine.evaluate(
+            action_req, self.workspace_root, bypass_approval=True
+        )
+
+        start_time = time.monotonic()
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        if decision.decision != DecisionType.ALLOW:
+            # Policy denied on execution (e.g. workspace symlink tampered)
+            task.decision = decision.decision.value
+            task.reason = decision.reason.value
+            task.status = ActionStatus.DENIED.value
+            task.updated_at = now_iso
+            task.error = "Policy validation failed on execution"
+            self.audit_store.save_task(task)
+
+            self.audit_store.record_event(
+                AuditEvent(
+                    timestamp=now_iso,
+                    task_id=task_id,
+                    event_type="action_denied",
+                    tool=task.tool,
+                    decision=decision.decision.value,
+                    reason=decision.reason.value,
+                    details={"status": ActionStatus.DENIED.value},
+                )
+            )
+
+            return ActionResponse(
+                task_id=task_id,
+                tool=task.tool,
+                decision=decision.decision,
+                reason=decision.reason,
+                policy_version=decision.policy_version,
+                status=ActionStatus.DENIED,
+                result=None,
+                error="Policy validation failed on execution",
+            )
+
+        # Record approval event
+        self.audit_store.record_event(
+            AuditEvent(
+                timestamp=now_iso,
+                task_id=task_id,
+                event_type="action_approved",
+                tool=task.tool,
+                decision=DecisionType.ALLOW.value,
+                reason=ReasonCode.ALLOWED.value,
+                details={"status": ActionStatus.RUNNING.value},
+            )
+        )
+
+        # Execute approved tool
+        status = ActionStatus.ERROR
+        result = None
+        error_msg = None
+
+        try:
+            result, status = self._execute_tool(task.tool, decision.sanitized_arguments)
+        except ToolExecutionError as e:
+            status = ActionStatus.ERROR
+            error_msg = self._sanitize_error(str(e))
+        except CommandExecutionError as e:
+            status = ActionStatus.ERROR
+            error_msg = self._sanitize_error(str(e))
+        except Exception:
+            status = ActionStatus.ERROR
+            error_msg = "Internal tool execution error"
+
+        duration_seconds = time.monotonic() - start_time
+        completed_iso = datetime.now(timezone.utc).isoformat()
+
+        redacted_result = (
+            redact_sensitive_payload(result, tool_name=task.tool, is_result=True)
+            if result
+            else None
+        )
+
+        task.status = status.value
+        task.decision = DecisionType.ALLOW.value
+        task.reason = ReasonCode.ALLOWED.value
+        task.result = redacted_result if isinstance(redacted_result, dict) else None
+        task.error = error_msg
+        task.duration_seconds = round(duration_seconds, 3)
+        task.updated_at = completed_iso
+        self.audit_store.save_task(task)
+
+        # Record execution completion audit event
+        self.audit_store.record_event(
+            AuditEvent(
+                timestamp=completed_iso,
+                task_id=task_id,
+                event_type="action_executed",
+                tool=task.tool,
+                decision=DecisionType.ALLOW.value,
+                reason=ReasonCode.ALLOWED.value,
+                details={
+                    "status": status.value,
+                    "duration_seconds": round(duration_seconds, 3),
+                },
+            )
+        )
+
+        return ActionResponse(
+            task_id=task_id,
+            tool=task.tool,
+            decision=DecisionType.ALLOW,
+            reason=ReasonCode.ALLOWED,
+            policy_version=decision.policy_version,
+            status=status,
+            result=result,
+            error=error_msg,
+        )
+
+    def reject_task(self, task_id: str) -> ActionResponse:
+        """Reject a task waiting in pending_approval state."""
+        if not self.audit_store:
+            raise ToolExecutionError("Audit store not configured")
+
+        task = self.audit_store.get_task(task_id)
+        if not task:
+            raise TaskNotFoundError(f"Task not found: {task_id}")
+
+        if task.status != ActionStatus.PENDING_APPROVAL.value:
+            raise InvalidTaskStateError(
+                f"Task {task_id} is not pending approval (status: {task.status})"
+            )
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        task.status = ActionStatus.DENIED.value
+        task.decision = DecisionType.DENY.value
+        task.reason = ReasonCode.APPROVAL_REJECTED.value
+        task.error = "Action rejected by human operator"
+        task.updated_at = now_iso
+        self.audit_store.save_task(task)
+
+        self.audit_store.record_event(
+            AuditEvent(
+                timestamp=now_iso,
+                task_id=task_id,
+                event_type="action_rejected",
+                tool=task.tool,
+                decision=DecisionType.DENY.value,
+                reason=ReasonCode.APPROVAL_REJECTED.value,
+                details={
+                    "status": ActionStatus.DENIED.value,
+                    "reason": ReasonCode.APPROVAL_REJECTED.value,
+                },
+            )
+        )
+
+        return ActionResponse(
+            task_id=task_id,
+            tool=task.tool,
+            decision=DecisionType.DENY,
+            reason=ReasonCode.APPROVAL_REJECTED,
+            policy_version=task.policy_version,
+            status=ActionStatus.DENIED,
+            result=None,
+            error="Action rejected by human operator",
         )
 
     def _run_async_task(
@@ -440,6 +692,9 @@ class ToolDispatcher:
             return write_file(
                 self.workspace_root, rel_path, content, max_size
             ), ActionStatus.SUCCESS
+        elif tool_name == "delete_file":
+            rel_path = sanitized_args["path"]
+            return delete_file(self.workspace_root, rel_path), ActionStatus.SUCCESS
         elif tool_name == "run_command":
             cmd = sanitized_args["command"]
             args = sanitized_args.get("args", [])

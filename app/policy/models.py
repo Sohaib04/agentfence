@@ -9,10 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class DecisionType(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
+    PENDING_APPROVAL = "pending_approval"
 
 
 class ReasonCode(str, Enum):
     ALLOWED = "allowed"
+    REQUIRES_APPROVAL = "requires_approval"
+    APPROVAL_REJECTED = "approval_rejected"
     UNKNOWN_TOOL = "unknown_tool"
     TOOL_DISABLED = "tool_disabled"
     INVALID_ARGUMENTS = "invalid_arguments"

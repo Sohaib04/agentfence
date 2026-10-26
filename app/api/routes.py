@@ -9,7 +9,7 @@ from app.__init__ import __version__
 from app.api.auth import verify_auth_token
 from app.api.schemas import ActionResponse, ActionStatus, HealthResponse
 from app.policy.models import ActionRequest, DecisionType
-from app.tools.dispatcher import ToolDispatcher
+from app.tools.dispatcher import InvalidTaskStateError, TaskNotFoundError, ToolDispatcher
 
 router = APIRouter()
 
@@ -108,3 +108,45 @@ def get_audit(
         "limit": eff_limit,
         "offset": eff_offset,
     }
+
+
+@router.post("/v1/tasks/{task_id}/approve", response_model=ActionResponse)
+def approve_task(
+    task_id: str,
+    _token: str = Depends(verify_auth_token),
+    dispatcher: ToolDispatcher = Depends(get_dispatcher),
+) -> ActionResponse:
+    """Approve and execute a task waiting in pending_approval state."""
+    try:
+        return dispatcher.approve_task(task_id)
+    except TaskNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task not found: {task_id}",
+        )
+    except InvalidTaskStateError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.post("/v1/tasks/{task_id}/reject", response_model=ActionResponse)
+def reject_task(
+    task_id: str,
+    _token: str = Depends(verify_auth_token),
+    dispatcher: ToolDispatcher = Depends(get_dispatcher),
+) -> ActionResponse:
+    """Reject a task waiting in pending_approval state."""
+    try:
+        return dispatcher.reject_task(task_id)
+    except TaskNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task not found: {task_id}",
+        )
+    except InvalidTaskStateError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.tools.files import ToolExecutionError, list_files, read_file, write_file
+from app.tools.files import ToolExecutionError, delete_file, list_files, read_file, write_file
 
 
 @pytest.fixture
@@ -79,3 +79,28 @@ def test_file_tools_error_handling(workspace: Path):
     with pytest.raises(ToolExecutionError) as exc:
         list_files(workspace, "nonexistent_dir")
     assert "Directory not found" in str(exc.value)
+
+
+def test_delete_file(workspace: Path):
+    target = workspace / "to_delete.txt"
+    target.write_text("temporary content")
+    assert target.exists()
+
+    res = delete_file(workspace, "to_delete.txt")
+    assert res["path"] == "to_delete.txt"
+    assert res["deleted"] is True
+    assert not target.exists()
+
+
+def test_delete_file_error_handling(workspace: Path):
+    # Non-existent file
+    with pytest.raises(ToolExecutionError) as exc:
+        delete_file(workspace, "nonexistent.txt")
+    assert "File not found" in str(exc.value)
+
+    # Attempting to delete a directory
+    sub = workspace / "a_directory"
+    sub.mkdir()
+    with pytest.raises(ToolExecutionError) as exc:
+        delete_file(workspace, "a_directory")
+    assert "not a regular file" in str(exc.value)

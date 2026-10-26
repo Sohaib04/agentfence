@@ -101,3 +101,22 @@ def write_file(
         }
     except OSError as e:
         raise ToolExecutionError(f"Failed to write file: {e}")
+
+
+def delete_file(workspace_root: Path, relative_path: str) -> dict[str, Any]:
+    """Delete a regular file within the workspace."""
+    target_file = workspace_root / relative_path
+
+    if not target_file.exists():
+        raise ToolExecutionError(f"File not found: {relative_path}")
+    if not target_file.is_file():
+        raise ToolExecutionError(f"Path is not a regular file: {relative_path}")
+
+    try:
+        target_file.unlink()
+        return {
+            "path": relative_path,
+            "deleted": True,
+        }
+    except OSError as e:
+        raise ToolExecutionError(f"Failed to delete file: {e}")

@@ -139,7 +139,7 @@ ruff format --check .
 ruff check .
 ```
 
-*Test Results:* **70 tests** total (unit, integration, Docker container isolation, async background execution, and adversarial prompt-injection scenarios). When Docker is offline, Docker-dependent tests are skipped cleanly and reported explicitly.
+*Test Results:* **81 tests** total (unit, integration, Docker container isolation, async execution, human approval flows, and adversarial prompt-injection scenarios). When Docker is offline, Docker-dependent tests are skipped cleanly and reported explicitly.
 
 ---
 
@@ -240,13 +240,60 @@ curl -X POST http://127.0.0.1:8000/v1/actions \
 }
 ```
 
-#### 5. Poll / Retrieve Persisted Task State
+#### 5. Fine-Grained Human Approval Flow (Side Quest 4)
+Destructive actions (such as `delete_file`) pause in `pending_approval` until an operator reviews them:
+```bash
+curl -X POST http://127.0.0.1:8000/v1/actions \
+  -H "Authorization: Bearer agentfence-dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "delete_file", "arguments": {"path": "obsolete.txt"}}'
+```
+*Response:*
+```json
+{
+  "task_id": "c9a41b52-6729-4bfe-98e3-0d321151e031",
+  "tool": "delete_file",
+  "decision": "pending_approval",
+  "reason": "requires_approval",
+  "policy_version": "1.0.0",
+  "status": "pending_approval",
+  "result": null,
+  "error": null
+}
+```
+
+**Approve the task:**
+```bash
+curl -X POST http://127.0.0.1:8000/v1/tasks/c9a41b52-6729-4bfe-98e3-0d321151e031/approve \
+  -H "Authorization: Bearer agentfence-dev-token"
+```
+*Response:*
+```json
+{
+  "task_id": "c9a41b52-6729-4bfe-98e3-0d321151e031",
+  "tool": "delete_file",
+  "decision": "allow",
+  "reason": "allowed",
+  "policy_version": "1.0.0",
+  "status": "success",
+  "result": {"path": "obsolete.txt", "deleted": true},
+  "error": null
+}
+```
+
+**Or reject the task:**
+```bash
+curl -X POST http://127.0.0.1:8000/v1/tasks/c9a41b52-6729-4bfe-98e3-0d321151e031/reject \
+  -H "Authorization: Bearer agentfence-dev-token"
+```
+
+#### 6. Poll / Retrieve Persisted Task State
 ```bash
 curl -X GET http://127.0.0.1:8000/v1/tasks/8fb87019-33ad-43ec-8b29-e0d297a7e366 \
   -H "Authorization: Bearer agentfence-dev-token"
 ```
 
-#### 6. Inspect Audit Log
+#### 7. Inspect Audit Log
 ```bash
 curl -X GET "http://127.0.0.1:8000/v1/audit?limit=10" \
   -H "Authorization: Bearer agentfence-dev-token"
@@ -257,5 +304,5 @@ curl -X GET "http://127.0.0.1:8000/v1/audit?limit=10" \
 ## Realistic Future Work
 
 1. **Untrusted Model Planner Adapter:** Integrating an external LLM provider treated as an untrusted planner passing structured output through the gateway.
-2. **Approval Flow for File Deletion:** Interactive human-in-the-loop approval confirmation for destructive tools such as `delete_file`.
+2. **Empirical Attack-Success-Rate (ASR) Benchmark:** Quantify and benchmark prompt-injection defenses across a curated scenario set.
 3. **gVisor (`runsc`) Runtime Integration:** Evaluating gVisor container runtime sandboxing alongside standard Linux namespaces to further reduce kernel attack surface.

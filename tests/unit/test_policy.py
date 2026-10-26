@@ -161,3 +161,54 @@ def test_fails_closed_on_malformed_input(policy_setup):
     decision = engine.evaluate("not an action object", ws)  # type: ignore
     assert decision.decision == DecisionType.DENY
     assert decision.reason == ReasonCode.INVALID_ARGUMENTS
+
+
+def test_delete_file_approval_policy(policy_setup):
+    from app.policy.loader import PolicyConfig, ToolConfig
+
+    ws = policy_setup["ws"]
+    outside = policy_setup["outside"]
+
+    # Configure policy requiring approval for delete_file
+    cfg = PolicyConfig(
+        policy_version="1.0.0",
+        tools={
+            "delete_file": ToolConfig(enabled=True, approval_required=True),
+        },
+    )
+    engine = PolicyEngine(config=cfg)
+
+    # 1. Normal safe path -> PENDING_APPROVAL
+    decision = engine.evaluate(
+        ActionRequest(tool="delete_file", arguments={"path": "safe.txt"}), ws
+    )
+    assert decision.decision == DecisionType.PENDING_APPROVAL
+    assert decision.reason == ReasonCode.REQUIRES_APPROVAL
+    assert decision.sanitized_arguments == {"path": "safe.txt"}
+
+    # 2. Traversal attack -> DENIED immediately, never reaches approval
+    decision = engine.evaluate(
+        ActionRequest(tool="delete_file", arguments={"path": "../../etc/shadow"}), ws
+    )
+    assert decision.decision == DecisionType.DENY
+    assert decision.reason == ReasonCode.PATH_OUTSIDE_WORKSPACE
+
+    # 3. Symlink escape -> DENIED immediately, never reaches approval
+    sym = ws / "sym_out"
+    if not sym.exists():
+        sym.symlink_to(outside)
+    decision = engine.evaluate(
+        ActionRequest(tool="delete_file", arguments={"path": "sym_out/file.txt"}), ws
+    )
+    assert decision.decision == DecisionType.DENY
+    assert decision.reason == ReasonCode.SYMLINK_ESCAPE
+
+    # 4. Bypass approval (approved task re-evaluation) -> ALLOW
+    decision = engine.evaluate(
+        ActionRequest(tool="delete_file", arguments={"path": "safe.txt"}),
+        ws,
+        bypass_approval=True,
+    )
+    assert decision.decision == DecisionType.ALLOW
+    assert decision.reason == ReasonCode.ALLOWED
+    assert decision.sanitized_arguments == {"path": "safe.txt"}

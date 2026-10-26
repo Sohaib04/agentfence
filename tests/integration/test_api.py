@@ -143,7 +143,7 @@ def test_forbidden_actions_denied_with_reasons(client: TestClient):
     # Disabled tool
     res = client.post(
         "/v1/actions",
-        json={"tool": "delete_file", "arguments": {"path": "notes.txt"}},
+        json={"tool": "network_request", "arguments": {}},
         headers=headers,
     )
     assert res.status_code == 200

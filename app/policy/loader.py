@@ -14,6 +14,7 @@ else:
 
 class ToolConfig(BaseModel):
     enabled: bool = False
+    approval_required: bool = False
     max_size_bytes: int = 1048576  # Default 1MB
     allowed_arguments: list[str] = Field(default_factory=list)
     allowed_commands: list[str] = Field(default_factory=list)
@@ -58,6 +59,7 @@ def load_policy(policy_path: Path | str | None = None) -> PolicyConfig:
         if isinstance(tool_data, dict):
             standard_keys = {
                 "enabled",
+                "approval_required",
                 "max_size_bytes",
                 "allowed_arguments",
                 "allowed_commands",
@@ -67,6 +69,7 @@ def load_policy(policy_path: Path | str | None = None) -> PolicyConfig:
             }
             tools[tool_name] = ToolConfig(
                 enabled=tool_data.get("enabled", False),
+                approval_required=tool_data.get("approval_required", False),
                 max_size_bytes=tool_data.get("max_size_bytes", 1048576),
                 allowed_arguments=tool_data.get("allowed_arguments", []),
                 allowed_commands=tool_data.get("allowed_commands", []),

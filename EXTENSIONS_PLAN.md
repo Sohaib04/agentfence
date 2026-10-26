@@ -74,7 +74,7 @@
 
 ---
 
-## Side Quest 4: Fine-Grained Human Approval for `delete_file`
+## Side Quest 4: Fine-Grained Human Approval for `delete_file` [COMPLETED]
 
 **Goal:** Implement human-in-the-loop authorization for destructive tools.
 

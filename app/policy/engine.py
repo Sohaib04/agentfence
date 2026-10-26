@@ -41,7 +41,10 @@ class PolicyEngine:
         )
 
     def evaluate(
-        self, action: ActionRequest | dict[str, Any], workspace_root: Path
+        self,
+        action: ActionRequest | dict[str, Any],
+        workspace_root: Path,
+        bypass_approval: bool = False,
     ) -> PolicyDecision:
         """Evaluate an action request against the policy configuration and workspace root.
 
@@ -76,6 +79,10 @@ class PolicyEngine:
                 return self._evaluate_read_file(args, workspace_root, tool_cfg)
             elif tool_name == "write_file":
                 return self._evaluate_write_file(args, workspace_root, tool_cfg)
+            elif tool_name == "delete_file":
+                return self._evaluate_delete_file(
+                    args, workspace_root, tool_cfg, bypass_approval=bypass_approval
+                )
             elif tool_name == "run_command":
                 return self._evaluate_run_command(args, workspace_root, tool_cfg)
             else:
@@ -84,6 +91,36 @@ class PolicyEngine:
         except Exception:
             # Fails closed on any unexpected error
             return self._deny(ReasonCode.INTERNAL_ERROR)
+
+    def _evaluate_delete_file(
+        self,
+        args: dict[str, Any],
+        workspace_root: Path,
+        tool_cfg: Any,
+        bypass_approval: bool = False,
+    ) -> PolicyDecision:
+        if "path" not in args:
+            return self._deny(ReasonCode.MISSING_ARGUMENT)
+
+        path_arg = args["path"]
+        if not isinstance(path_arg, str) or not path_arg.strip():
+            return self._deny(ReasonCode.INVALID_ARGUMENTS)
+
+        resolved_path, reason, relative_path = validate_workspace_path(
+            workspace_root, path_arg, allow_empty=False
+        )
+        if reason is not None:
+            return self._deny(reason)
+
+        if tool_cfg.approval_required and not bypass_approval:
+            return PolicyDecision(
+                decision=DecisionType.PENDING_APPROVAL,
+                reason=ReasonCode.REQUIRES_APPROVAL,
+                policy_version=self.version,
+                sanitized_arguments={"path": relative_path},
+            )
+
+        return self._allow(sanitized={"path": relative_path})
 
     def _evaluate_list_files(
         self, args: dict[str, Any], workspace_root: Path, tool_cfg: Any

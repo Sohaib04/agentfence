@@ -17,7 +17,8 @@ enabled = true
 max_size_bytes = 1048576  # 1MB limit
 
 [tools.delete_file]
-enabled = false  # Explicitly disabled in default MVP policy
+enabled = true
+approval_required = true
 
 [tools.run_command]
 enabled = true
