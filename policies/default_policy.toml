@@ -26,6 +26,7 @@ allowed_commands = ["python3", "pytest", "ls", "cat", "echo", "grep", "head", "t
 max_timeout_seconds = 30
 max_output_bytes = 1048576  # 1MB
 sandbox_image = "agentfence-sandbox:0.1.0"
+# sandbox_runtime = "runsc"  # Optional: enable gVisor sandboxed kernel runtime (runsc) if installed on host
 
 [tools.network_request]
 enabled = false

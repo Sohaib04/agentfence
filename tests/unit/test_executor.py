@@ -123,3 +123,134 @@ def test_executor_output_truncation(executor: DockerExecutor, tmp_path: Path):
         assert result.truncated is True
         assert len(result.stdout.encode("utf-8")) < 600
         assert "[OUTPUT TRUNCATED]" in result.stdout
+
+
+def test_build_docker_run_args_runtime_options(executor: DockerExecutor, tmp_path: Path):
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    limits = ContainerLimits()
+
+    # 1. Default (no runtime specified) -> no --runtime flag
+    args_default = executor.build_docker_run_args(
+        container_name="box-1",
+        workspace_root=ws,
+        command="python3",
+        args=["-c", "pass"],
+        limits=limits,
+        image="agentfence-sandbox:0.1.0",
+    )
+    assert not any(a.startswith("--runtime") for a in args_default)
+
+    # 2. Runtime passed directly to build_docker_run_args -> --runtime=runsc
+    args_runsc = executor.build_docker_run_args(
+        container_name="box-2",
+        workspace_root=ws,
+        command="python3",
+        args=["-c", "pass"],
+        limits=limits,
+        image="agentfence-sandbox:0.1.0",
+        runtime="runsc",
+    )
+    assert "--runtime=runsc" in args_runsc
+
+    # 3. Runtime passed as "--runtime=runsc" format normalized
+    args_normalized = executor.build_docker_run_args(
+        container_name="box-3",
+        workspace_root=ws,
+        command="python3",
+        args=["-c", "pass"],
+        limits=limits,
+        image="agentfence-sandbox:0.1.0",
+        runtime="--runtime=runsc",
+    )
+    assert "--runtime=runsc" in args_normalized
+
+    # 4. Runtime configured on ContainerLimits
+    limits_with_runtime = ContainerLimits(runtime="runsc")
+    args_via_limits = executor.build_docker_run_args(
+        container_name="box-4",
+        workspace_root=ws,
+        command="python3",
+        args=["-c", "pass"],
+        limits=limits_with_runtime,
+        image="agentfence-sandbox:0.1.0",
+    )
+    assert "--runtime=runsc" in args_via_limits
+
+    # 5. Runtime configured on executor instance
+    gvisor_executor = DockerExecutor(
+        default_image="agentfence-sandbox:0.1.0",
+        runtime="runsc",
+    )
+    args_via_executor = gvisor_executor.build_docker_run_args(
+        container_name="box-5",
+        workspace_root=ws,
+        command="python3",
+        args=["-c", "pass"],
+        limits=limits,
+        image="agentfence-sandbox:0.1.0",
+    )
+    assert "--runtime=runsc" in args_via_executor
+
+
+def test_is_runsc_available_detection():
+    from app.executor.docker import is_runsc_available
+
+    # Case 1: runsc binary directly in PATH
+    with patch("shutil.which", return_value="/usr/local/bin/runsc"):
+        assert is_runsc_available() is True
+
+    # Case 2: runsc binary not in PATH, but registered in Docker runtimes
+    mock_docker_info = MagicMock()
+    mock_docker_info.returncode = 0
+    mock_docker_info.stdout = '{"runc":{"path":"runc"},"runsc":{"path":"/usr/bin/runsc"}}'
+
+    with (
+        patch("shutil.which", return_value=None),
+        patch("app.executor.docker.is_docker_available", return_value=True),
+        patch("subprocess.run", return_value=mock_docker_info),
+    ):
+        assert is_runsc_available() is True
+
+    # Case 3: Neither binary nor Docker runtime has runsc
+    mock_docker_info_no_runsc = MagicMock()
+    mock_docker_info_no_runsc.returncode = 0
+    mock_docker_info_no_runsc.stdout = '{"runc":{"path":"runc"}}'
+
+    with (
+        patch("shutil.which", return_value=None),
+        patch("app.executor.docker.is_docker_available", return_value=True),
+        patch("subprocess.run", return_value=mock_docker_info_no_runsc),
+    ):
+        assert is_runsc_available() is False
+
+    # Case 4: Docker info subprocess throws exception
+    with (
+        patch("shutil.which", return_value=None),
+        patch("app.executor.docker.is_docker_available", return_value=True),
+        patch("subprocess.run", side_effect=OSError("Command not found")),
+    ):
+        assert is_runsc_available() is False
+
+
+def test_executor_run_with_gvisor_runtime(tmp_path: Path):
+    executor = DockerExecutor(runtime="runsc")
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.stdout = b"gvisor sandbox output\n"
+    mock_proc.stderr = b""
+
+    with patch("subprocess.run", return_value=mock_proc) as mock_run:
+        result = executor.run(
+            command="python3",
+            args=["-c", "print('hello')"],
+            workspace_root=tmp_path,
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == "gvisor sandbox output\n"
+        assert result.extra.get("runtime") == "runsc"
+
+        # Verify docker run (the first subprocess call before cleanup) had --runtime=runsc
+        run_cmd = mock_run.call_args_list[0][0][0]
+        assert "--runtime=runsc" in run_cmd

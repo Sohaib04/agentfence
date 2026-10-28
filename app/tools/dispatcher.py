@@ -701,10 +701,12 @@ class ToolDispatcher:
             timeout = sanitized_args.get("timeout", 30)
             max_output = sanitized_args.get("max_output_bytes", 1048576)
             image = sanitized_args.get("sandbox_image")
+            runtime = sanitized_args.get("sandbox_runtime")
 
             limits = ContainerLimits(
                 timeout_seconds=timeout,
                 max_output_bytes=max_output,
+                runtime=runtime,
             )
 
             exec_res = self.executor.run(
@@ -713,6 +715,7 @@ class ToolDispatcher:
                 workspace_root=self.workspace_root,
                 limits=limits,
                 image=image,
+                runtime=runtime,
             )
 
             if exec_res.timed_out:

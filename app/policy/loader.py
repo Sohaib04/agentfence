@@ -21,6 +21,7 @@ class ToolConfig(BaseModel):
     max_timeout_seconds: int = 30
     max_output_bytes: int = 1048576
     sandbox_image: str = "agentfence-sandbox:0.1.0"
+    sandbox_runtime: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -66,6 +67,7 @@ def load_policy(policy_path: Path | str | None = None) -> PolicyConfig:
                 "max_timeout_seconds",
                 "max_output_bytes",
                 "sandbox_image",
+                "sandbox_runtime",
             }
             tools[tool_name] = ToolConfig(
                 enabled=tool_data.get("enabled", False),
@@ -76,6 +78,7 @@ def load_policy(policy_path: Path | str | None = None) -> PolicyConfig:
                 max_timeout_seconds=tool_data.get("max_timeout_seconds", 30),
                 max_output_bytes=tool_data.get("max_output_bytes", 1048576),
                 sandbox_image=tool_data.get("sandbox_image", "agentfence-sandbox:0.1.0"),
+                sandbox_runtime=tool_data.get("sandbox_runtime"),
                 extra={k: v for k, v in tool_data.items() if k not in standard_keys},
             )
 

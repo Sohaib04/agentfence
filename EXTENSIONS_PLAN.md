@@ -94,7 +94,7 @@
 
 ---
 
-## Side Quest 5: gVisor (`runsc`) Sandboxing Analysis & Architecture Comparison
+## Side Quest 5: gVisor (`runsc`) Sandboxing Analysis & Architecture Comparison [COMPLETED]
 
 **Goal:** Evaluate Google's gVisor runtime (`runsc`) as a defense against shared-kernel vulnerabilities.
 

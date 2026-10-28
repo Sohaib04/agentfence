@@ -12,6 +12,7 @@ class ContainerLimits(BaseModel):
     timeout_seconds: int = 30
     max_output_bytes: int = 1048576  # 1MB
     tmpfs_size: str = "64m"
+    runtime: str | None = None
 
 
 class ExecutionResult(BaseModel):

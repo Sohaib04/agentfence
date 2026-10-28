@@ -225,3 +225,44 @@ def test_dispatcher_async_denial_blocks_immediately(tmp_path: Path):
     assert task is not None
     assert task.status == "denied"
     assert task.decision == "deny"
+
+
+def test_dispatcher_run_command_passes_sandbox_runtime(tmp_path: Path):
+    from app.executor.models import ExecutionResult
+    from app.policy.loader import PolicyConfig, ToolConfig
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+
+    cfg = PolicyConfig(
+        policy_version="1.0.0",
+        tools={
+            "run_command": ToolConfig(
+                enabled=True,
+                allowed_commands=["python3"],
+                sandbox_runtime="runsc",
+            ),
+        },
+    )
+    engine = PolicyEngine(config=cfg)
+    dispatcher = ToolDispatcher(workspace_root=ws, policy_engine=engine)
+
+    with patch.object(dispatcher.executor, "run") as mock_run:
+        mock_run.return_value = ExecutionResult(
+            exit_code=0,
+            stdout="gvisor ok",
+            stderr="",
+            extra={"runtime": "runsc"},
+        )
+        action = ActionRequest(
+            tool="run_command",
+            arguments={"command": "python3", "args": ["-c", "print('ok')"]},
+        )
+        res = dispatcher.dispatch(action)
+
+        assert res.decision == DecisionType.ALLOW
+        assert res.status == ActionStatus.SUCCESS
+        mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        assert kwargs.get("runtime") == "runsc"
+        assert kwargs["limits"].runtime == "runsc"

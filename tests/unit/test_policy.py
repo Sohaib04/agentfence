@@ -212,3 +212,32 @@ def test_delete_file_approval_policy(policy_setup):
     assert decision.decision == DecisionType.ALLOW
     assert decision.reason == ReasonCode.ALLOWED
     assert decision.sanitized_arguments == {"path": "safe.txt"}
+
+
+def test_run_command_sandbox_runtime_propagation(tmp_path: Path):
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+
+    cfg = PolicyConfig(
+        policy_version="1.0.0",
+        tools={
+            "run_command": ToolConfig(
+                enabled=True,
+                allowed_commands=["python3"],
+                sandbox_image="agentfence-sandbox:0.1.0",
+                sandbox_runtime="runsc",
+            ),
+        },
+    )
+    engine = PolicyEngine(config=cfg)
+
+    action = ActionRequest(
+        tool="run_command",
+        arguments={"command": "python3", "args": ["-c", "print(1)"]},
+    )
+    decision = engine.evaluate(action, ws)
+
+    assert decision.decision == DecisionType.ALLOW
+    assert decision.reason == ReasonCode.ALLOWED
+    assert decision.sanitized_arguments["sandbox_runtime"] == "runsc"
+    assert decision.sanitized_arguments["command"] == "python3"

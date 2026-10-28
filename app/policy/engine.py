@@ -233,12 +233,14 @@ class PolicyEngine:
                 return self._deny(ReasonCode.INVALID_ARGUMENTS)
             timeout = min(int(raw_timeout), tool_cfg.max_timeout_seconds)
 
-        return self._allow(
-            sanitized={
-                "command": cmd,
-                "args": clean_args,
-                "timeout": timeout,
-                "max_output_bytes": tool_cfg.max_output_bytes,
-                "sandbox_image": getattr(tool_cfg, "sandbox_image", "agentfence-sandbox:0.1.0"),
-            }
-        )
+        sanitized: dict[str, Any] = {
+            "command": cmd,
+            "args": clean_args,
+            "timeout": timeout,
+            "max_output_bytes": tool_cfg.max_output_bytes,
+            "sandbox_image": getattr(tool_cfg, "sandbox_image", "agentfence-sandbox:0.1.0"),
+        }
+        if getattr(tool_cfg, "sandbox_runtime", None):
+            sanitized["sandbox_runtime"] = tool_cfg.sandbox_runtime
+
+        return self._allow(sanitized=sanitized)

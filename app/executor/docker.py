@@ -27,6 +27,26 @@ def is_docker_available() -> bool:
         return False
 
 
+def is_runsc_available() -> bool:
+    """Check if the gVisor runsc runtime is installed on the host or registered in Docker."""
+    if shutil.which("runsc") is not None:
+        return True
+    if is_docker_available():
+        try:
+            proc = subprocess.run(
+                ["docker", "info", "--format", "{{json .Runtimes}}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                text=True,
+            )
+            if proc.returncode == 0 and "runsc" in proc.stdout:
+                return True
+        except (subprocess.SubprocessError, OSError):
+            pass
+    return False
+
+
 class CommandExecutor(Protocol):
     """Protocol defining the executor interface."""
 
@@ -37,6 +57,7 @@ class CommandExecutor(Protocol):
         workspace_root: Path,
         limits: ContainerLimits | None = None,
         image: str | None = None,
+        runtime: str | None = None,
     ) -> ExecutionResult: ...
 
 
@@ -45,8 +66,13 @@ class DockerExecutor:
 
     DEFAULT_IMAGE = "agentfence-sandbox:0.1.0"
 
-    def __init__(self, default_image: str | None = None) -> None:
+    def __init__(
+        self,
+        default_image: str | None = None,
+        runtime: str | None = None,
+    ) -> None:
         self.image = default_image or self.DEFAULT_IMAGE
+        self.runtime = runtime
 
     def build_docker_run_args(
         self,
@@ -56,9 +82,11 @@ class DockerExecutor:
         args: list[str],
         limits: ContainerLimits,
         image: str,
+        runtime: str | None = None,
     ) -> list[str]:
         """Construct the hardened Docker CLI arguments array."""
         ws_resolved = str(workspace_root.resolve())
+        eff_runtime = runtime or limits.runtime or self.runtime
 
         docker_args = [
             "docker",
@@ -66,41 +94,52 @@ class DockerExecutor:
             "--rm",
             "--name",
             container_name,
-            # Hardening: complete network isolation
-            "--network",
-            "none",
-            # Hardening: read-only root filesystem
-            "--read-only",
-            # Hardening: minimal isolated tmpfs for temporary operations
-            "--tmpfs",
-            f"/tmp:rw,noexec,nosuid,size={limits.tmpfs_size}",
-            # Hardening: drop all Linux capabilities
-            "--cap-drop",
-            "ALL",
-            # Hardening: prevent privilege escalation
-            "--security-opt",
-            "no-new-privileges",
-            # Hardening: unprivileged user
-            "--user",
-            "10001:10001",
-            # Filesystem mount: workspace only
-            "-v",
-            f"{ws_resolved}:/workspace:rw",
-            "-w",
-            "/workspace",
-            # Resource bounds
-            "--memory",
-            limits.memory_limit,
-            "--cpus",
-            str(limits.cpu_quota),
-            "--pids-limit",
-            str(limits.pids_limit),
-            # Container image
-            image,
-            # Executable and arguments (array format, never shell string)
-            command,
-            *args,
         ]
+
+        # Optional gVisor or alternative runtime (e.g., --runtime=runsc)
+        if eff_runtime:
+            clean_runtime = eff_runtime.removeprefix("--runtime=").strip()
+            if clean_runtime:
+                docker_args.append(f"--runtime={clean_runtime}")
+
+        docker_args.extend(
+            [
+                # Hardening: complete network isolation
+                "--network",
+                "none",
+                # Hardening: read-only root filesystem
+                "--read-only",
+                # Hardening: minimal isolated tmpfs for temporary operations
+                "--tmpfs",
+                f"/tmp:rw,noexec,nosuid,size={limits.tmpfs_size}",
+                # Hardening: drop all Linux capabilities
+                "--cap-drop",
+                "ALL",
+                # Hardening: prevent privilege escalation
+                "--security-opt",
+                "no-new-privileges",
+                # Hardening: unprivileged user
+                "--user",
+                "10001:10001",
+                # Filesystem mount: workspace only
+                "-v",
+                f"{ws_resolved}:/workspace:rw",
+                "-w",
+                "/workspace",
+                # Resource bounds
+                "--memory",
+                limits.memory_limit,
+                "--cpus",
+                str(limits.cpu_quota),
+                "--pids-limit",
+                str(limits.pids_limit),
+                # Container image
+                image,
+                # Executable and arguments (array format, never shell string)
+                command,
+                *args,
+            ]
+        )
         return docker_args
 
     def run(
@@ -110,10 +149,12 @@ class DockerExecutor:
         workspace_root: Path,
         limits: ContainerLimits | None = None,
         image: str | None = None,
+        runtime: str | None = None,
     ) -> ExecutionResult:
         """Run a command inside the hardened Docker sandbox with timeout and cleanup."""
         eff_limits = limits or ContainerLimits()
         eff_image = image or self.image
+        eff_runtime = runtime or eff_limits.runtime or self.runtime
         container_name = f"af-box-{uuid.uuid4().hex[:12]}"
 
         docker_cmd = self.build_docker_run_args(
@@ -123,6 +164,7 @@ class DockerExecutor:
             args=args,
             limits=eff_limits,
             image=eff_image,
+            runtime=eff_runtime,
         )
 
         start_time = time.monotonic()
@@ -167,6 +209,12 @@ class DockerExecutor:
             stderr_raw, eff_limits.max_output_bytes
         )
 
+        extra_info: dict[str, str] = {}
+        if eff_runtime:
+            clean_runtime = eff_runtime.removeprefix("--runtime=").strip()
+            if clean_runtime:
+                extra_info["runtime"] = clean_runtime
+
         return ExecutionResult(
             exit_code=exit_code,
             stdout=stdout_text,
@@ -175,6 +223,7 @@ class DockerExecutor:
             truncated=stdout_truncated or stderr_truncated,
             duration_seconds=round(duration, 3),
             container_id=container_name,
+            extra=extra_info,
         )
 
     def _kill_container(self, container_name: str) -> None:
