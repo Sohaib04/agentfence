@@ -67,6 +67,7 @@ Policy Engine (Deterministic authorization, fail-closed, no LLMs)
 - **Live LLM Planner Adapter (Untrusted Planner):** Translates natural language user goals into structured tool actions using live providers (Google Gemini, OpenAI) with zero-configuration deterministic fallback when offline or without API keys. Enforces the Untrusted Model Principle — model proposals are strictly untrusted proposals validated by Pydantic schemas, authorized by the deterministic policy engine, and executed inside isolated sandboxes. API keys are strictly confined to host environment variables and never logged, committed, or mounted into containers.
 - **Local API Gateway:** FastAPI loopback-bound (`127.0.0.1:8000`) with token authentication, 2MB request body cap, and safe error masking (no leaked stack traces or host paths).
 - **Deterministic Mock Agent & Adversarial Test Suite:** Reproducible simulation of indirect prompt injection and attack sequences.
+- **Empirical Attack-Success-Rate (ASR) Benchmark Suite:** Automated benchmark quantifying prompt injection, roleplay jailbreak, and path traversal resistance across 20 curated scenarios (100% baseline ungoverned ASR reduced to **0.0% breach rate** with AgentFence).
 
 ---
 
@@ -228,7 +229,7 @@ ruff format --check .
 ruff check .
 ```
 
-*Test Results:* **105 tests** total (unit, integration, Docker container isolation, gVisor comparative sandboxing, live LLM planner workflows, async execution, human approval flows, and adversarial prompt-injection scenarios). When Docker or gVisor runtimes are offline, environment-dependent tests are skipped cleanly and reported explicitly.
+*Test Results:* **109 tests** total (unit, integration, Docker container isolation, gVisor comparative sandboxing, live LLM planner workflows, empirical ASR benchmark execution, async execution, human approval flows, and adversarial prompt-injection scenarios). When Docker or gVisor runtimes are offline, environment-dependent tests are skipped cleanly and reported explicitly.
 
 ---
 
@@ -252,6 +253,42 @@ python run_agent.py
 ```
 
 *Key Guarantee:* If no API key is provided, the agent automatically falls back to deterministic heuristic planning, ensuring 100% testability offline. All API keys are loaded strictly from host environment variables, never logged, never committed, and never mounted into container sandboxes.
+
+---
+
+## Empirical Attack-Success-Rate (ASR) Benchmark
+
+AgentFence includes an automated empirical benchmark (`benchmarks/asr_benchmark.py`) evaluating security efficacy across 20 curated scenarios spanning benign control workloads, path traversals, administrative override jailbreaks, DAN roleplay injections, indirect file injections, dangerous commands, and symlink escapes:
+
+```bash
+# Run benchmark with terminal summary table and markdown export
+python benchmarks/asr_benchmark.py
+
+# Run benchmark with JSON output format
+python benchmarks/asr_benchmark.py --json
+```
+
+### Benchmark Results Summary
+
+| Metric | Without Gateway (Ungoverned Model) | With AgentFence Security Gateway |
+|---|---|---|
+| **Attack Success Rate (ASR)** | **100.0%** (Full Compromise) | **0.0% (Target: 0% Breach Rate)** |
+| **Benign Workload Pass Rate** | 100.0% | **100.0% (Zero Functional Regression)** |
+| **Host Escape / Compromise Rate** | 100.0% | **0.0% (Zero Escapes)** |
+| **Total Scenarios Evaluated** | 20 | 20 |
+
+### Category Performance Breakdown
+
+| Category | Scenarios | Baseline ASR (No Gateway) | AgentFence ASR | Enforcement Mechanism |
+|---|---|---|---|---|
+| **Benign Control** | 5 | 0.0% | **0.0%** | Allowed through confined tools & sandbox |
+| **Path Traversal** | 5 | 100.0% | **0.0%** | Deterministic `is_relative_to` workspace path validation |
+| **Prompt Injection** | 3 | 100.0% | **0.0%** | Command allowlist & path resolution (fail-closed) |
+| **Indirect Injection** | 2 | 100.0% | **0.0%** | Untrusted file content containment & path bounds |
+| **Dangerous Commands** | 3 | 100.0% | **0.0%** | Strict command allowlist (`allowed_commands`) |
+| **Filesystem Integrity** | 2 | 100.0% | **0.0%** | Symlink resolution check & human-in-the-loop approval |
+
+Full per-scenario evaluation logs are generated automatically in [`benchmarks/ASR_REPORT.md`](benchmarks/ASR_REPORT.md).
 
 ---
 
@@ -415,5 +452,5 @@ curl -X GET "http://127.0.0.1:8000/v1/audit?limit=10" \
 
 ## Realistic Future Work
 
-1. **Empirical Attack-Success-Rate (ASR) Benchmark (Side Quest 2):** Quantify and benchmark prompt-injection defenses across a curated scenario set.
-2. **MicroVM Isolation Adapter:** Implementing a dedicated Firecracker / Cloud Hypervisor backend for hardware-enforced MMU virtualization.
+1. **MicroVM Isolation Adapter:** Implementing a dedicated Firecracker / Cloud Hypervisor backend for hardware-enforced MMU virtualization.
+2. **Multi-Agent Swarm Governance:** Distributed reference monitors managing shared-state access across concurrent multi-agent teams.

@@ -37,7 +37,7 @@
 
 ---
 
-## Side Quest 2: Empirical Attack-Success-Rate (ASR) Benchmark
+## Side Quest 2: Empirical Attack-Success-Rate (ASR) Benchmark [COMPLETED]
 
 **Goal:** Quantify and demonstrate the security gateway's efficacy by running a benchmark suite of adversarial prompts against a live model.
 

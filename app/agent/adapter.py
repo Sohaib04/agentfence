@@ -136,18 +136,53 @@ class DeterministicFallbackProvider:
     def generate_action(self, prompt: str) -> tuple[ActionRequest, str]:
         prompt_lower = prompt.lower().strip()
 
-        # 1. Path traversal / absolute path / adversarial canary requests
+        # 1. Dangerous or specific command requests (curl, wget, rm, bash)
+        if "curl" in prompt_lower:
+            url_match = re.search(r"https?://[^\s'\"`]+", prompt)
+            url = url_match.group(0) if url_match else "http://1.1.1.1"
+            req = ActionRequest(tool="run_command", arguments={"command": "curl", "args": [url]})
+            return req, json.dumps(req.model_dump())
+
+        if "wget" in prompt_lower:
+            url_match = re.search(r"https?://[^\s'\"`]+", prompt)
+            url = url_match.group(0) if url_match else "http://1.1.1.1"
+            req = ActionRequest(tool="run_command", arguments={"command": "wget", "args": [url]})
+            return req, json.dumps(req.model_dump())
+
+        if "rm" in prompt_lower and ("-rf" in prompt_lower or "rm " in prompt_lower):
+            req = ActionRequest(
+                tool="run_command", arguments={"command": "rm", "args": ["-rf", "/"]}
+            )
+            return req, json.dumps(req.model_dump())
+
+        if "bash" in prompt_lower:
+            cmd_match = re.search(r"-c\s+['\"]([^'\"]+)['\"]", prompt)
+            args = ["-c", cmd_match.group(1)] if cmd_match else ["-i"]
+            req = ActionRequest(tool="run_command", arguments={"command": "bash", "args": args})
+            return req, json.dumps(req.model_dump())
+
+        # 2. Path traversal / absolute path / adversarial canary requests
         match_path = re.search(
-            r"(/[a-zA-Z0-9_\.\-]+(?:/[a-zA-Z0-9_\.\-]+)+|\.\./[a-zA-Z0-9_\.\-/]+)",
+            r"(?<![:/])(/[a-zA-Z0-9_\.\-]+(?:/[a-zA-Z0-9_\.\-]+)+|\.\./[a-zA-Z0-9_\.\-/]+)",
             prompt,
         )
         if match_path:
             path_val = match_path.group(1).rstrip(".,;'\"")
-            tool_name = "delete_file" if "delete" in prompt_lower else "read_file"
-            req = ActionRequest(tool=tool_name, arguments={"path": path_val})
+            if "delete" in prompt_lower:
+                req = ActionRequest(tool="delete_file", arguments={"path": path_val})
+            elif "write" in prompt_lower or "create file" in prompt_lower:
+                content = "Generated content"
+                match_content = re.search(r"['\"]([^'\"]+)['\"]", prompt)
+                if match_content:
+                    content = match_content.group(1)
+                req = ActionRequest(
+                    tool="write_file", arguments={"path": path_val, "content": content}
+                )
+            else:
+                req = ActionRequest(tool="read_file", arguments={"path": path_val})
             return req, json.dumps(req.model_dump())
 
-        # 2. File writing commands
+        # 3. File writing commands
         if "write" in prompt_lower or "create file" in prompt_lower:
             match_to = re.search(r"\bto\s+([a-zA-Z0-9_\-\./]+)", prompt, re.I)
             match_file = re.search(
@@ -165,7 +200,7 @@ class DeterministicFallbackProvider:
             req = ActionRequest(tool="write_file", arguments={"path": target, "content": content})
             return req, json.dumps(req.model_dump())
 
-        # 3. File deletion commands
+        # 4. File deletion commands
         if "delete" in prompt_lower or "remove" in prompt_lower:
             match = re.search(
                 r"(?:delete|remove)\s+(?:the\s+)?(?:host\s+)?(?:file\s+)?([a-zA-Z0-9_\-\./]+)",
@@ -176,10 +211,10 @@ class DeterministicFallbackProvider:
             req = ActionRequest(tool="delete_file", arguments={"path": target})
             return req, json.dumps(req.model_dump())
 
-        # 4. File reading commands
-        if "read" in prompt_lower or "cat " in prompt_lower:
+        # 5. File reading commands (including symlink paths)
+        if "read" in prompt_lower or "cat " in prompt_lower or "symlink" in prompt_lower:
             match = re.search(
-                r"(?:read|cat|inspect)\s+(?:the\s+)?(?:host\s+)?(?:file\s+)?([a-zA-Z0-9_\-\./]+)",
+                r"(?:read|cat|inspect|symlink)\s+(?:the\s+)?(?:host\s+)?(?:file\s+)?(?:symlink\s+)?([a-zA-Z0-9_\-\./]+)",
                 prompt,
                 re.I,
             )
@@ -187,7 +222,7 @@ class DeterministicFallbackProvider:
             req = ActionRequest(tool="read_file", arguments={"path": target})
             return req, json.dumps(req.model_dump())
 
-        # 5. Inspect workspace / directory listing
+        # 6. Inspect workspace / directory listing
         if (
             "workspace" in prompt_lower
             or "list" in prompt_lower
@@ -197,32 +232,22 @@ class DeterministicFallbackProvider:
             req = ActionRequest(tool="list_files", arguments={"path": "."})
             return req, json.dumps(req.model_dump())
 
-        # 4. File writing commands
-        if "write" in prompt_lower or "create file" in prompt_lower:
-            match_file = re.search(r"(?:write|create file)\s+(?:to\s+)?([^\s,;]+)", prompt, re.I)
-            target = match_file.group(1) if match_file else "output.txt"
-            content = "Generated content"
-            match_content = re.search(r"['\"]([^'\"]+)['\"]", prompt)
-            if match_content:
-                content = match_content.group(1)
-            req = ActionRequest(tool="write_file", arguments={"path": target, "content": content})
-            return req, json.dumps(req.model_dump())
-
-        # 5. Command execution
+        # 7. Standard command execution
         if "run" in prompt_lower or "execute" in prompt_lower or "test" in prompt_lower:
             if "pytest" in prompt_lower:
                 req = ActionRequest(
                     tool="run_command", arguments={"command": "pytest", "args": ["-v"]}
                 )
             elif "python" in prompt_lower or "python3" in prompt_lower:
-                req = ActionRequest(
-                    tool="run_command",
-                    arguments={"command": "python3", "args": ["-c", "print('hello from python')"]},
+                cmd_match = re.search(r"-c\s+['\"]([^'\"]+)['\"]", prompt)
+                py_args = (
+                    ["-c", cmd_match.group(1)]
+                    if cmd_match
+                    else ["-c", "print('hello from python')"]
                 )
-            elif "curl" in prompt_lower:
                 req = ActionRequest(
                     tool="run_command",
-                    arguments={"command": "curl", "args": ["http://1.1.1.1"]},
+                    arguments={"command": "python3", "args": py_args},
                 )
             else:
                 req = ActionRequest(
@@ -231,7 +256,7 @@ class DeterministicFallbackProvider:
                 )
             return req, json.dumps(req.model_dump())
 
-        # 6. Default to list_files
+        # 8. Default to list_files
         req = ActionRequest(tool="list_files", arguments={"path": "."})
         return req, json.dumps(req.model_dump())
 
