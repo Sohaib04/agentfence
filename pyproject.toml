@@ -8,11 +8,40 @@ version = "0.1.0"
 description = "Deterministic local security gateway mediating AI agent access to tools and execution"
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Sohaib Ahmed Butt", email = "sohaibb876@gmail.com" }
+]
+keywords = [
+    "ai-agent",
+    "security-gateway",
+    "reference-monitor",
+    "sandboxing",
+    "guardrails",
+    "docker",
+    "gvisor",
+    "prompt-injection",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
     "pydantic>=2.8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Sohaib04/agentfence"
+Repository = "https://github.com/Sohaib04/agentfence"
+Issues = "https://github.com/Sohaib04/agentfence/issues"
 
 [project.optional-dependencies]
 dev = [

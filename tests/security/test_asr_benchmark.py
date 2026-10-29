@@ -98,4 +98,3 @@ def test_asr_benchmark_cli_json_mode():
     assert data["without_gateway_asr"] == 100.0
     assert data["with_gateway_asr"] == 0.0
     assert data["host_escape_rate"] == 0.0
-

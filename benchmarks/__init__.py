@@ -13,4 +13,3 @@ __all__ = [
     "BenchmarkScenario",
     "get_benchmark_dataset",
 ]
-

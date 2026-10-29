@@ -1,5 +1,10 @@
 # AgentFence
 
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![Tests: 109 Passed](https://img.shields.io/badge/tests-109%20passed-success.svg)](tests/)
+
 > **Deterministic local security gateway mediating AI agent tool access and command execution.**
 
 AgentFence acts as a local reference monitor between an untrusted AI agent and a machine's operating system. The agent proposes structured tool actions, a deterministic policy engine evaluates each action against a strict security policy, approved actions run through confined tools and an isolated Docker sandbox, and all actions and outcomes are recorded in an audit store.
@@ -200,7 +205,7 @@ AgentFence provides native, configurable support for `--runtime=runsc` without a
 
 ```bash
 # 1. Clone repository and navigate to workspace
-git clone https://github.com/sohaib_04/agentfence.git
+git clone https://github.com/Sohaib04/agentfence.git
 cd agentfence
 
 # 2. Create and activate virtual environment
@@ -367,7 +372,7 @@ curl -X POST http://127.0.0.1:8000/v1/actions \
 }
 ```
 
-#### 4. Asynchronous Background Execution (Side Quest 3)
+#### 4. Asynchronous Background Execution
 Execute commands asynchronously without blocking the client. Returns `202 Accepted` immediately:
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/actions \
@@ -389,7 +394,7 @@ curl -X POST http://127.0.0.1:8000/v1/actions \
 }
 ```
 
-#### 5. Fine-Grained Human Approval Flow (Side Quest 4)
+#### 5. Fine-Grained Human-in-the-Loop Approval Flow
 Destructive actions (such as `delete_file`) pause in `pending_approval` until an operator reviews them:
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/actions \
@@ -450,7 +455,21 @@ curl -X GET "http://127.0.0.1:8000/v1/audit?limit=10" \
 
 ---
 
-## Realistic Future Work
+## Documentation & Specifications
 
-1. **MicroVM Isolation Adapter:** Implementing a dedicated Firecracker / Cloud Hypervisor backend for hardware-enforced MMU virtualization.
-2. **Multi-Agent Swarm Governance:** Distributed reference monitors managing shared-state access across concurrent multi-agent teams.
+- **[Technical Architecture Specification](docs/SPECIFICATION.md):** Detailed breakdown of trust boundaries, fail-closed policy logic, tool choke points, and API schema models.
+- **[Empirical ASR Benchmark Report](benchmarks/ASR_REPORT.md):** 20 curated adversarial attack vectors, test methodologies, and empirical comparison metrics.
+- **[Project Roadmap](docs/ROADMAP.md):** Completed capabilities and future engineering milestones (MicroVMs, multi-agent swarms).
+
+---
+
+## Contributing & Security
+
+- **[Contributing Guide](CONTRIBUTING.md):** Environment setup, coding conventions, test execution, and pull request guidelines.
+- **[Security Policy](SECURITY.md):** Vulnerability disclosure instructions and threat boundary overview.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
