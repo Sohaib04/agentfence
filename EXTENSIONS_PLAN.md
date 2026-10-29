@@ -15,7 +15,7 @@
 
 ---
 
-## Side Quest 1: Real LLM Adapter (Untrusted Planner)
+## Side Quest 1: Real LLM Adapter (Untrusted Planner) [COMPLETED]
 
 **Goal:** Connect a real LLM provider (e.g., Gemini, OpenAI, or Claude) to act as a live planner that formulates structured tool actions from natural language user prompts.
 

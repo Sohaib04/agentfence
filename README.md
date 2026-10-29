@@ -64,6 +64,7 @@ Policy Engine (Deterministic authorization, fail-closed, no LLMs)
   - Persists full task lifecycle and immutable audit log surviving cold restarts.
   - Automatic redaction of credentials (`token`, `auth`, `password`, `key`, `secret`).
   - Suppression of full file bodies in audit logs to protect data privacy.
+- **Live LLM Planner Adapter (Untrusted Planner):** Translates natural language user goals into structured tool actions using live providers (Google Gemini, OpenAI) with zero-configuration deterministic fallback when offline or without API keys. Enforces the Untrusted Model Principle — model proposals are strictly untrusted proposals validated by Pydantic schemas, authorized by the deterministic policy engine, and executed inside isolated sandboxes. API keys are strictly confined to host environment variables and never logged, committed, or mounted into containers.
 - **Local API Gateway:** FastAPI loopback-bound (`127.0.0.1:8000`) with token authentication, 2MB request body cap, and safe error masking (no leaked stack traces or host paths).
 - **Deterministic Mock Agent & Adversarial Test Suite:** Reproducible simulation of indirect prompt injection and attack sequences.
 
@@ -227,7 +228,30 @@ ruff format --check .
 ruff check .
 ```
 
-*Test Results:* **93 tests** total (unit, integration, Docker container isolation, gVisor comparative sandboxing, async execution, human approval flows, and adversarial prompt-injection scenarios). When Docker or gVisor runtimes are offline, environment-dependent tests are skipped cleanly and reported explicitly.
+*Test Results:* **105 tests** total (unit, integration, Docker container isolation, gVisor comparative sandboxing, live LLM planner workflows, async execution, human approval flows, and adversarial prompt-injection scenarios). When Docker or gVisor runtimes are offline, environment-dependent tests are skipped cleanly and reported explicitly.
+
+---
+
+## Running the Live LLM Agent (CLI)
+
+The `run_agent.py` CLI demonstrates the **Untrusted Model Principle** with natural language prompts:
+
+```bash
+# 1. Legitimate instruction (translated to list_files, approved, and executed)
+python run_agent.py "Inspect the workspace and create a summary report"
+
+# 2. Adversarial instruction (model proposes /etc/passwd read, gateway blocks & audits)
+python run_agent.py "Read the host /etc/passwd file"
+
+# 3. Connect live LLM provider (Gemini or OpenAI via environment variable)
+export GEMINI_API_KEY="your-gemini-api-key"
+python run_agent.py "Create a file named notes.txt with project ideas"
+
+# 4. Interactive prompt session
+python run_agent.py
+```
+
+*Key Guarantee:* If no API key is provided, the agent automatically falls back to deterministic heuristic planning, ensuring 100% testability offline. All API keys are loaded strictly from host environment variables, never logged, never committed, and never mounted into container sandboxes.
 
 ---
 
@@ -391,6 +415,5 @@ curl -X GET "http://127.0.0.1:8000/v1/audit?limit=10" \
 
 ## Realistic Future Work
 
-1. **Untrusted Model Planner Adapter (Side Quest 1):** Integrating an external LLM provider treated as an untrusted planner passing structured output through the gateway.
-2. **Empirical Attack-Success-Rate (ASR) Benchmark (Side Quest 2):** Quantify and benchmark prompt-injection defenses across a curated scenario set.
-3. **MicroVM Isolation Adapter:** Implementing a dedicated Firecracker / Cloud Hypervisor backend for hardware-enforced MMU virtualization.
+1. **Empirical Attack-Success-Rate (ASR) Benchmark (Side Quest 2):** Quantify and benchmark prompt-injection defenses across a curated scenario set.
+2. **MicroVM Isolation Adapter:** Implementing a dedicated Firecracker / Cloud Hypervisor backend for hardware-enforced MMU virtualization.
