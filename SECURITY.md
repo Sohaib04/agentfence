@@ -36,3 +36,4 @@ AgentFence operates under the **Untrusted Model Principle**:
 4. **Local Gateway Boundary:** The API binds to localhost loopback (`127.0.0.1`) with token authentication and request size bounding.
 
 For full architectural details, consult the [Threat Model in the README](README.md#threat-model).
+

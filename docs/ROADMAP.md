@@ -55,3 +55,4 @@ This document outlines completed milestones and future engineering directions fo
 
 ### 3. Granular Network Sandboxing
 - Policy-governed egress proxy allowing domain-allowlisted outbound HTTP requests with TLS inspection and secret-exfiltration detection.
+

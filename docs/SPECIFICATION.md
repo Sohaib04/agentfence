@@ -135,3 +135,4 @@ Paginated inspection of recorded audit records with automatic credential redacti
 
 ### 5. `GET /health`
 Liveness check returning service status without invoking sandbox containers.
+

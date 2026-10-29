@@ -69,3 +69,4 @@ ruff check .
 2. **Include Tests:** Any new policy rule, tool, or endpoint must include unit and integration tests.
 3. **Preserve Determinism:** Never rely on an LLM to evaluate safety policies. Policy decisions must remain deterministic and fail-closed.
 4. **Never Weaken Sandboxing:** Do not weaken container boundaries (e.g. adding root privileges, mounting docker socket, enabling network without justification) to pass tests.
+
